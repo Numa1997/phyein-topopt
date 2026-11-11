@@ -13,6 +13,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from examples.chair import build
 from topopt.top3d import solve_static, element_von_mises
+from topopt.checks import connectivity
 
 def check(run_dir, delta_max=5e-3, sigma_y=42e6, sf=2.0):
     run = Path(run_dir)
@@ -33,6 +34,17 @@ def check(run_dir, delta_max=5e-3, sigma_y=42e6, sf=2.0):
         p99, smax = float(np.percentile(s, 99)) / 1e6, float(s.max()) / 1e6
         res["stress"][name] = dict(p99_MPa=p99, max_MPa=smax)
         ok &= p99 <= sigma_y / sf / 1e6
+    # connectivity of the half model (the mirror copy joins it across the plane x = 0)
+    g = prob.grid
+    x3 = x.reshape(g.nx, g.ny, g.nz)
+    ncomp, sizes, lab = connectivity(x3)
+    main = int(np.argmax(sizes)) + 1 if ncomp else 0
+    f = m["f"]
+    feet = {"front": bool((lab[g.nx - f:, :f, 0] == main).any()), "back": bool((lab[g.nx - f:, g.ny - f:, 0] == main).any())}
+    res["connectivity"] = dict(components=int(ncomp), sizes=[int(v) for v in sizes[:5]],
+                               main_share=float(sizes.max() / sizes.sum()) if ncomp else 0.0,
+                               reaches_feet=feet)
+    ok &= ncomp >= 1 and all(feet.values())
     res["pass"] = bool(ok)
     json.dump(res, open(run / "design_check.json", "w"), indent=1)
     print(json.dumps(res, indent=1))
