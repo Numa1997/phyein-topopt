@@ -1,5 +1,7 @@
 # phyein-topopt
 
+> The general physics toolchain (OpenFOAM, finite elements, JAX, Kaggle, website delivery) now lives in [phyein-sim](https://github.com/Numa1997/phyein-sim); this repository keeps the structural topology-optimisation code and its image.
+
 Structural topology optimisation, from a block of material and its loads to the shape that carries
 them: voxel finite elements, SIMP with a density filter and Heaviside projection, optimality-criteria
 updates, then marching cubes, smoothing, a stress-coloured render and an animation.
