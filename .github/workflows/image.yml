@@ -21,7 +21,11 @@ jobs:
         run: |
           IMG=ghcr.io/$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')/phyein-topopt
           echo "IMG=$IMG" >> "$GITHUB_ENV"
-          docker build -t "$IMG:${{ github.sha }}" -t "$IMG:latest" .
+          # the source label links the new GHCR package to this repository, which is what lets
+          # the built-in GITHUB_TOKEN push to it (without it the registry answers "denied")
+          docker build --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            -t "$IMG:${{ github.sha }}" -t "$IMG:latest" .
       - name: Acceptance checks inside the image
         run: |
           docker run --rm "$IMG:${{ github.sha }}"
