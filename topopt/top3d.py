@@ -224,24 +224,33 @@ class Problem:
         return [(self.fixed, self.loads)] + list(self.extra_groups)
 
 
-def solve_static(p: Problem, xPhys, E0, Emin, penal, nu, tol=1e-8):
-    """One FE analysis at fixed densities. Returns U (3*nnode, all load columns of all groups)."""
+def solve_static(p: Problem, xPhys, E0, Emin, penal, nu, tol=1e-8, backend="mgcg"):
+    """One FE analysis at fixed densities. Returns U (3*nnode, all load columns of all groups).
+    backend 'mgcg' (default): matrix-free multigrid CG (topopt/mgcg.py); 'pardiso': direct."""
     g = p.grid
     ndof = 3 * g.nnode
     k0 = hex8_stiffness(nu)
     Ee = (Emin + xPhys**penal * (E0 - Emin)) * g.a
     out = []
     for fixed, loads in p.groups():
-        free = np.setdiff1d(np.arange(ndof), fixed)
-        U = np.zeros((ndof, loads.shape[1]))
-        U[free], _ = Solver(g, free, tol).solve(Assembler(g, k0, free).K(Ee), loads[free])
+        if backend == "mgcg":
+            from .mgcg import MGCG
+            mg = MGCG(g, k0, fixed, tol=tol, maxit=1000)
+            mg.update(Ee)
+            U, _ = mg.solve(loads)
+            if mg.last_res.max() > 1e3 * tol:
+                raise RuntimeError(f"MGCG did not converge: residual {mg.last_res.max():.1e}")
+        else:
+            free = np.setdiff1d(np.arange(ndof), fixed)
+            U = np.zeros((ndof, loads.shape[1]))
+            U[free], _ = Solver(g, free, tol, backend=backend).solve(Assembler(g, k0, free).K(Ee), loads[free])
         out.append(U)
     return np.hstack(out)
 
 
 def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3, move=0.2,
              beta0=1.0, beta_max=16.0, beta_every=40, eta=0.5, tol=0.01, ctol=1e-3, maxit=300,
-             record=True, verbose=True, cg_tol=1e-8):
+             record=True, verbose=True, cg_tol=1e-8, backend="mgcg"):
     g = p.grid
     ndof = 3 * g.nnode
     groups = p.groups()
@@ -249,9 +258,15 @@ def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3
     w = np.ones(nL) if p.weights is None else np.asarray(p.weights, float)
     k0 = hex8_stiffness(nu)
     frees = [np.setdiff1d(np.arange(ndof), f) for f, _ in groups]
-    asms = [Assembler(g, k0, fr) for fr in frees]
-    solvers = [Solver(g, fr, cg_tol) for fr in frees]
-    edof = asms[0].edof
+    if backend == "mgcg":
+        from concurrent.futures import ThreadPoolExecutor
+        from .mgcg import MGCG
+        mgs = [MGCG(g, k0, f, tol=cg_tol, maxit=1000) for f, _ in groups]
+        pool = ThreadPoolExecutor(max_workers=len(groups))
+    else:
+        asms = [Assembler(g, k0, fr) for fr in frees]
+        solvers = [Solver(g, fr, cg_tol, backend=backend) for fr in frees]
+    edof = g.edof()
     H, Hs = density_filter(g, rmin)
     design = np.ones(g.nel, bool); design[p.passive_solid] = False; design[p.passive_void] = False
     nd = design.sum()
@@ -277,11 +292,26 @@ def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3
         loop += 1; since_beta += 1
         Ee = (Emin + xPhys**penal * (E0 - Emin)) * g.a
         its, col = [], 0
-        for gi, ((_, loads), fr) in enumerate(zip(groups, frees)):
-            Ufs[gi], it_g = solvers[gi].solve(asms[gi].K(Ee), loads[fr], Ufs[gi])
-            U[:, col:col + loads.shape[1]] = 0.0
-            U[fr, col:col + loads.shape[1]] = Ufs[gi]
-            col += loads.shape[1]; its += it_g
+        if backend == "mgcg":
+            # all support groups at once, each warm-started from its previous displacements
+            def run(gi):
+                mgs[gi].update(Ee)
+                u, it_g = mgs[gi].solve(groups[gi][1], Ufs[gi])
+                if mgs[gi].last_res.max() > 1e3 * cg_tol:
+                    raise RuntimeError(f"MGCG did not converge (group {gi}): residual {mgs[gi].last_res.max():.1e}")
+                return u, it_g
+            results = list(pool.map(run, range(len(groups))))
+            for gi, (u, it_g) in enumerate(results):
+                Ufs[gi] = u
+                nl = groups[gi][1].shape[1]
+                U[:, col:col + nl] = u
+                col += nl; its.append(it_g)
+        else:
+            for gi, ((_, loads), fr) in enumerate(zip(groups, frees)):
+                Ufs[gi], it_g = solvers[gi].solve(asms[gi].K(Ee), loads[fr], Ufs[gi])
+                U[:, col:col + loads.shape[1]] = 0.0
+                U[fr, col:col + loads.shape[1]] = Ufs[gi]
+                col += loads.shape[1]; its += it_g
         Ue = U[edof]                                               # (nel, 24, nL)
         ce = np.einsum("eil,ij,ejl->el", Ue, k0, Ue) * g.a           # u_e^T (a k0) u_e, per load case
         c = float(np.sum(w * np.sum(Ee[:, None] / g.a * ce, axis=0)))

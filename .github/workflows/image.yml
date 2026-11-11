@@ -30,7 +30,7 @@ jobs:
         run: |
           docker run --rm "$IMG:${{ github.sha }}"
           docker run --rm -v "$PWD/ci:/work" "$IMG:${{ github.sha }}" sh -c \
-            "cd /work && python /opt/phyein-topopt/benchmarks/mbb_check.py && cd /opt/phyein-topopt && python examples/chair.py --n 6 --out /work/chair_n6 && python examples/chair_animate.py /work/chair_n6 --frames_history 6 --fps 6"
+            "cd /work && python /opt/phyein-topopt/benchmarks/mbb_check.py && python /opt/phyein-topopt/benchmarks/check_mgcg.py && cd /opt/phyein-topopt && python examples/chair.py --n 6 --out /work/chair_n6 && python examples/chair_animate.py /work/chair_n6 --frames_history 6 --fps 6"
       - name: Push
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
