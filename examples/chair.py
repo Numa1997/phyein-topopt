@@ -116,6 +116,7 @@ if __name__ == "__main__":
     ap.add_argument("--beta_max", type=float, default=16.0)
     ap.add_argument("--beta_every", type=int, default=40)
     ap.add_argument("--maxit", type=int, default=300)
+    ap.add_argument("--backend", default="mgcg", choices=["mgcg", "mgcg_jax", "pardiso"])
     ap.add_argument("--out", default="results/chair")
     A = ap.parse_args()
     prob, meta = build(A.n)
@@ -125,7 +126,7 @@ if __name__ == "__main__":
           f"{g.nel} elements, {3*g.nnode} DOFs", flush=True)
     E0 = A.E0
     r = optimise(prob, A.volfrac, A.penal, A.rmin, E0=E0, Emin=1e-9 * E0, nu=A.nu, beta_max=A.beta_max,
-                 beta_every=A.beta_every, maxit=A.maxit)
+                 beta_every=A.beta_every, maxit=A.maxit, backend=A.backend)
     vm = element_von_mises(g, r["U"], r["xPhys"], E0, A.nu)          # Pa, per load case
     # stress field of the starting (uniform-density) block, for the "stress" stage of the animation
     out = Path(A.out); out.mkdir(parents=True, exist_ok=True)

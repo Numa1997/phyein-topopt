@@ -278,11 +278,14 @@ def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3
     w = np.ones(nL) if p.weights is None else np.asarray(p.weights, float)
     k0 = hex8_stiffness(nu)
     frees = [np.setdiff1d(np.arange(ndof), f) for f, _ in groups]
-    if backend == "mgcg":
+    if backend in ("mgcg", "mgcg_jax"):
         from concurrent.futures import ThreadPoolExecutor
-        from .mgcg import MGCG
-        mgs = [MGCG(g, k0, f, tol=cg_tol, maxit=1000) for f, _ in groups]
-        pool = ThreadPoolExecutor(max_workers=len(groups))
+        if backend == "mgcg":
+            from .mgcg import MGCG as _MG
+        else:                                   # JAX port, runs on a GPU if JAX sees one
+            from .mgcg_jax import MGCGJax as _MG
+        mgs = [_MG(g, k0, f, tol=cg_tol, maxit=1000) for f, _ in groups]
+        pool = ThreadPoolExecutor(max_workers=len(groups) if backend == "mgcg" else 1)
     else:
         asms = [Assembler(g, k0, fr) for fr in frees]
         solvers = [Solver(g, fr, cg_tol, backend=backend) for fr in frees]
@@ -312,7 +315,7 @@ def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3
         loop += 1; since_beta += 1
         Ee = (Emin + xPhys**penal * (E0 - Emin)) * g.a
         its, col = [], 0
-        if backend == "mgcg":
+        if backend in ("mgcg", "mgcg_jax"):
             # all support groups at once, each warm-started from its previous displacements
             def run(gi):
                 mgs[gi].update(Ee)
