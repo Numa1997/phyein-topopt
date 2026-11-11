@@ -1,0 +1,45 @@
+name: run-case
+# Manual run of one case in the published image; results come back as a downloadable artifact.
+# Start it from the Actions tab ("Run workflow") or: gh workflow run run-case -f case=chair -f n=16
+on:
+  workflow_dispatch:
+    inputs:
+      case:    {description: "mbb or chair", required: true, default: chair, type: choice, options: [chair, mbb]}
+      n:       {description: "chair: voxels across the half width", default: "16"}
+      volfrac: {description: "volume fraction of the design region", default: "0.12"}
+      rmin:    {description: "filter radius in voxels", default: "1.5"}
+      penal:   {description: "SIMP penalty p", default: "3.0"}
+      label:   {description: "name for the result folder", default: "run"}
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350          # GitHub's hard limit per job is 6 h
+    steps:
+      - name: Optimise in the pinned image
+        env:
+          CASE: ${{ inputs.case }}
+          N: ${{ inputs.n }}
+          VF: ${{ inputs.volfrac }}
+          RMIN: ${{ inputs.rmin }}
+          PENAL: ${{ inputs.penal }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          IMG=ghcr.io/$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')/phyein-topopt:latest
+          mkdir -p out
+          docker run --rm -v "$PWD/out:/work" -e CASE -e N -e VF -e RMIN -e PENAL -e LABEL "$IMG" sh -c '
+            set -e; cd /opt/phyein-topopt
+            if [ "$CASE" = chair ]; then
+              python examples/chair.py --n "$N" --volfrac "$VF" --rmin "$RMIN" --penal "$PENAL" --out "/work/$LABEL"
+              python examples/chair_animate.py "/work/$LABEL"
+              rm -rf "/work/$LABEL/frames"
+            else
+              mkdir -p "/work/$LABEL" && cd "/work/$LABEL" && python /opt/phyein-topopt/benchmarks/mbb_check.py
+            fi'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.case }}-${{ inputs.label }}
+          path: out/

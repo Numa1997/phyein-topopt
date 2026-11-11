@@ -1,0 +1,38 @@
+name: build-test-publish-image
+# Builds the toolchain image, runs every acceptance check inside it, and only then pushes it
+# to the GitHub Container Registry as ghcr.io/<owner>/phyein-topopt:{latest,<commit>}.
+on:
+  push:
+    branches: [main]
+    paths: [Dockerfile, requirements.txt, "topopt/**", "examples/**", "benchmarks/**", ".github/workflows/image.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write   # needed to push the image with the built-in GITHUB_TOKEN; no personal token involved
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          IMG=ghcr.io/$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')/phyein-topopt
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+          docker build -t "$IMG:${{ github.sha }}" -t "$IMG:latest" .
+      - name: Acceptance checks inside the image
+        run: |
+          docker run --rm "$IMG:${{ github.sha }}"
+          docker run --rm -v "$PWD/ci:/work" "$IMG:${{ github.sha }}" sh -c \
+            "cd /work && python /opt/phyein-topopt/benchmarks/mbb_check.py && cd /opt/phyein-topopt && python examples/chair.py --n 6 --out /work/chair_n6 && python examples/chair_animate.py /work/chair_n6 --frames_history 6 --fps 6"
+      - name: Push
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMG:${{ github.sha }}"
+          docker push "$IMG:latest"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-smoke-test
+          path: ci/chair_n6/chair_load_path.mp4
