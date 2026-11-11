@@ -1,0 +1,16 @@
+{
+  "name": "phyein-topopt",
+  "version": "0.1.0",
+  "description": "Structural topology optimisation: derive, run and check voxel SIMP designs (loads -> stress -> load path) with the phyein-topopt toolchain on free GitHub runners, and fetch STL, renders and films.",
+  "author": {
+    "name": "phyein-topopt"
+  },
+  "license": "MIT",
+  "keywords": [
+    "topology optimisation",
+    "FEA",
+    "SIMP",
+    "multigrid",
+    "3D printing"
+  ]
+}
