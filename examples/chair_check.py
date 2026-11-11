@@ -45,6 +45,39 @@ def check(run_dir, delta_max=5e-3, sigma_y=42e6, sf=2.0):
                                main_share=float(sizes.max() / sizes.sum()) if ncomp else 0.0,
                                reaches_feet=feet)
     ok &= ncomp >= 1 and all(feet.values())
+
+    # Buckling hand estimate (an addition to the user's goals, an engineering choice; labelled):
+    # slice the legs at mid-height (half model: legs near the outer side x = W/2), take each leg
+    # section's area and smallest principal second moment, Euler load with pinned ends (K = 1,
+    # conservative), compare with the axial force of the most loaded leg in test A from statics:
+    # back legs carry R_back = (F_s y_s + F_b h_b) / D, i.e. R_back / 2 per leg.
+    from scipy import ndimage
+    a = g.a
+    kmid = max(1, (m["ks"] - m["kt"]) // 2)
+    sec = x3[:, :, kmid] >= 0.5
+    lab2, n2 = ndimage.label(sec)
+    legs = []
+    for c in range(1, n2 + 1):
+        ii, jj = np.nonzero(lab2 == c)
+        A = ii.size * a * a
+        xc, yc = (ii + 0.5) * a, (jj + 0.5) * a
+        Ixx = np.sum((yc - yc.mean()) ** 2) * a * a + ii.size * a ** 4 / 12
+        Iyy = np.sum((xc - xc.mean()) ** 2) * a * a + ii.size * a ** 4 / 12
+        Ixy = np.sum((xc - xc.mean()) * (yc - yc.mean())) * a * a
+        Imin = 0.5 * (Ixx + Iyy) - np.sqrt(0.25 * (Ixx - Iyy) ** 2 + Ixy ** 2)
+        legs.append(dict(area_mm2=A * 1e6, Imin_mm4=Imin * 1e12, y_mm=float(yc.mean() * 1e3)))
+    Lleg = (m["ks"] - m["kt"]) * a
+    y_s = 0.5 * m["jb"] * a
+    h_b = 0.5 * (m["kb0"] + g.nz) * a
+    F_leg = (m["F_seat_test"] * y_s + m["F_back_test"] * h_b) / m["D"] / 2
+    if legs:
+        weakest = min(legs, key=lambda d: d["Imin_mm4"])
+        Pcr = np.pi ** 2 * E0 * weakest["Imin_mm4"] * 1e-12 / Lleg ** 2
+        res["buckling_estimate"] = dict(note="hand estimate, pinned-pinned Euler, mid-height section; "
+                                             "an added check, not part of the stated goal",
+                                        sections_at_mid_height=legs, leg_length_m=Lleg,
+                                        leg_force_testA_N=F_leg, Pcr_weakest_N=float(Pcr),
+                                        factor=float(Pcr / F_leg), passes_factor_2=bool(Pcr >= 2 * F_leg))
     res["pass"] = bool(ok)
     json.dump(res, open(run / "design_check.json", "w"), indent=1)
     print(json.dumps(res, indent=1))
