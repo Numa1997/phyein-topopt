@@ -33,7 +33,7 @@ def stress_field(prob, xPhys, nu, lc=1):
     return element_von_mises(prob.grid, U, xPhys, 1.0, nu)[:, lc]
 
 
-def camera(meta, azim_deg, elev_deg=18.0, r=1.95):
+def camera(meta, azim_deg, elev_deg=18.0, r=2.15):
     W, D, H = meta["W"], meta["D"], meta["Hc"]
     c = np.array([W / 2, D / 2, H * 0.45])
     az, el = np.radians(azim_deg), np.radians(elev_deg)

@@ -57,15 +57,18 @@ def plot_scene(mesh: trimesh.Trimesh, scalars, clim, out_png, title="", arrows=(
         pm["s"] = scalars
         p.add_mesh(pm, scalars="s", cmap=STRESS_CMAP, clim=clim, smooth_shading=True, specular=0.25,
                    show_scalar_bar=show_bar,
-                   scalar_bar_args=dict(title=label, color=INK, fmt="%.2f", vertical=False,
-                                        position_x=0.3, position_y=0.03, width=0.4, height=0.06, title_font_size=14, label_font_size=12))
+                   scalar_bar_args=dict(title="", color=INK, fmt="%.2f", vertical=False, n_labels=5,
+                                        position_x=0.3, position_y=0.03, width=0.4, height=0.05,
+                                        label_font_size=12))
+        if show_bar:   # bar title as separate text above the bar, so it never overlaps the tick labels
+            p.add_text(label, position=(int(window[0] * 0.3), int(window[1] * 0.105)), font_size=10, color=INK)
     for em, kw in extra_meshes:
         p.add_mesh(pv.wrap(em) if not isinstance(em, pv.DataSet) else em, **kw)
     for start, vec, mag in arrows:
         p.add_mesh(pv.Arrow(start=start, direction=vec, scale=mag, tip_length=0.3, tip_radius=0.08,
                             shaft_radius=0.03), color=INK)
     if title:
-        p.add_text(title, position="upper_left", font_size=12, color=INK)
+        p.add_text(title, position=(int(window[0] * 0.015), int(window[1] * 0.93)), font_size=11, color=INK)
     if camera is not None:
         p.camera_position = camera
     else:
