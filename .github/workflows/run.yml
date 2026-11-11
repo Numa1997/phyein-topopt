@@ -10,6 +10,7 @@ on:
       rmin:    {description: "filter radius in voxels", default: "2.0"}
       penal:   {description: "SIMP penalty p", default: "3.0"}
       label:   {description: "name for the result folder", default: "run"}
+      animate: {description: "render STL, stills and film", default: "yes", type: choice, options: ["yes", "no"]}
 
 permissions:
   contents: read
@@ -27,15 +28,19 @@ jobs:
           RMIN: ${{ inputs.rmin }}
           PENAL: ${{ inputs.penal }}
           LABEL: ${{ inputs.label }}
+          ANIMATE: ${{ inputs.animate }}
         run: |
           IMG=ghcr.io/$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')/phyein-topopt:latest
           mkdir -p out
-          docker run --rm -v "$PWD/out:/work" -e CASE -e N -e VF -e RMIN -e PENAL -e LABEL "$IMG" sh -c '
+          docker run --rm -v "$PWD/out:/work" -e CASE -e N -e VF -e RMIN -e PENAL -e LABEL -e ANIMATE "$IMG" sh -c '
             set -e; cd /opt/phyein-topopt
             if [ "$CASE" = chair ]; then
               python examples/chair.py --n "$N" --volfrac "$VF" --rmin "$RMIN" --penal "$PENAL" --out "/work/$LABEL"
-              python examples/chair_animate.py "/work/$LABEL"
-              rm -rf "/work/$LABEL/frames"
+              python examples/chair_check.py "/work/$LABEL" || echo "DESIGN GOAL NOT MET (see design_check.json)"
+              if [ "$ANIMATE" = yes ]; then
+                python examples/chair_animate.py "/work/$LABEL"
+                rm -rf "/work/$LABEL/frames"
+              fi
             else
               mkdir -p "/work/$LABEL" && cd "/work/$LABEL" && python /opt/phyein-topopt/benchmarks/mbb_check.py
             fi'

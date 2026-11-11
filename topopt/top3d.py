@@ -59,17 +59,37 @@ def hex8_B(xi, eta, zeta, a=1.0):
     return B
 
 
-def hex8_stiffness(nu: float) -> np.ndarray:
-    """k0 = integral over the unit cube of B^T D B dV with E = 1, by 2x2x2 Gauss quadrature
-    (exact for the trilinear element). det J = (a/2)^3 = 1/8, all weights 1."""
+def hex8_stiffness(nu: float, sri: bool = True) -> np.ndarray:
+    """k0 = integral over the unit cube of B^T D B dV with E = 1 (det J = 1/8, Gauss weights 1).
+
+    sri=False: full 2x2x2 Gauss quadrature (exact for the trilinear element). Locks volumetrically
+        as nu -> 1/2: the element cannot change shape at constant volume, so it is far too stiff
+        and the system becomes ill-conditioned (multigrid iterations rise 19 -> 218 from nu = 0.35
+        to 0.43 on the chair).
+    sri=True (default): selective reduced integration. Split D = D_dev + D_vol with
+        D_vol = K m m^T, K = lambda + 2 mu / 3 the bulk modulus, m = (1,1,1,0,0,0);
+        integrate the deviatoric part with 2x2x2 points and the volumetric part with one point at
+        the centre (Hughes 1980, Int. J. Numer. Meth. Eng. 15:1413-1418, the B-bar idea). The
+        constant-volume shape changes are then not penalised; full deviatoric integration keeps
+        hourglass modes out (k0 keeps exactly 6 zero-energy modes)."""
     D = elasticity_matrix(nu)
+    if sri:
+        lam = nu / ((1 + nu) * (1 - 2 * nu)); mu = 1 / (2 * (1 + nu))
+        m = np.array([1, 1, 1, 0, 0, 0], float)
+        Dvol = (lam + 2 * mu / 3) * np.outer(m, m)
+        Ddev = D - Dvol
+    else:
+        Ddev, Dvol = D, None
     g = 1 / np.sqrt(3)
     k = np.zeros((24, 24))
     for xi in (-g, g):
         for eta in (-g, g):
             for zeta in (-g, g):
                 B = hex8_B(xi, eta, zeta)
-                k += B.T @ D @ B / 8.0
+                k += B.T @ Ddev @ B / 8.0
+    if Dvol is not None:
+        B0 = hex8_B(0.0, 0.0, 0.0)
+        k += B0.T @ Dvol @ B0              # one point, weight 8, det J 1/8
     return k
 
 

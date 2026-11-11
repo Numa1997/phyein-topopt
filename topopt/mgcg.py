@@ -100,8 +100,14 @@ class MGCG:
     """Matrix-free MGCG solver for K(E) u = f on a voxel grid with the supports `fixed`."""
 
     def __init__(self, g: Grid, k0: np.ndarray, fixed: np.ndarray, smooth: int = 3, omega: float = 0.5,
-                 tol: float = 1e-8, maxit: int = 300, min_coarse_el: int = 200):
+                 tol: float = 1e-8, maxit: int = 300, min_coarse_el: int = 200, smoother: str = "chebyshev",
+                 cheb_ratio: float = 30.0):
+        """smoother 'chebyshev' (default): Chebyshev polynomial of degree `smooth` in D^-1 A on the
+        interval [lmax/cheb_ratio, 1.1 lmax], lmax from 15 power iterations per level and design.
+        Robust for nearly incompressible materials (PA12, nu = 0.43), where damped Jacobi stalls.
+        'jacobi': damped Jacobi with weight omega (pymoto's default, fine for nu <= 0.35)."""
         self.k0, self.smooth, self.omega, self.tol, self.maxit = k0, smooth, omega, tol, maxit
+        self.smoother, self.cheb_ratio = smoother, cheb_ratio
         self.P, _ = _child_prolongators()
         self.M = np.einsum("cia,ij,cjb->cab", self.P, k0, self.P)       # P_c^T k0 P_c, (8, 24, 24)
         self.levels = [_Level(g)]
@@ -179,6 +185,15 @@ class MGCG:
             d = L.S @ np.ascontiguousarray(np.diagonal(KE, axis1=1, axis2=2).T).ravel()
             L.zero = (np.abs(d) <= 1e-14 * np.abs(d).max()).astype(float)
             L.diag = d + L.zero
+        if self.smoother == "chebyshev":
+            rng = np.random.default_rng(0)
+            for l, L in enumerate(self.levels[:-1] if len(self.levels) > 1 else self.levels):
+                v = rng.standard_normal((L.ndof, 1))
+                lam = 1.0
+                for _ in range(15):                      # power iteration on D^-1 A
+                    w = self._A(l, v) / L.diag[:, None]
+                    lam = float(np.linalg.norm(w) / np.linalg.norm(v)); v = w / np.linalg.norm(w)
+                L.lmax = 1.1 * lam
         Lc = self.levels[-1]
         if len(self.levels) > 1:
             rows = np.repeat(Lc.edof, 24, axis=1).ravel(); cols = np.tile(Lc.edof, (1, 24)).ravel()
@@ -187,21 +202,45 @@ class MGCG:
             self.coarse = splu(Kc)
 
     # ---------------------------------------------------------------- V-cycle and PCG
+    def _smooth(self, l, r, u):
+        """Apply `smooth` steps of the smoother to A u = r starting from u (u may be None = 0)."""
+        L = self.levels[l]
+        if self.smoother == "jacobi":
+            Dinv = (self.omega / L.diag)[:, None]
+            if u is None:
+                u = Dinv * r; n = self.smooth - 1
+            else:
+                n = self.smooth
+            for _ in range(n):
+                u = u + Dinv * (r - self._A(l, u))
+            return u
+        # Chebyshev iteration (Saad, Iterative Methods, alg. 12.1) on D^-1 A over [a, b]
+        b = L.lmax; a = b / self.cheb_ratio
+        theta, delta = 0.5 * (b + a), 0.5 * (b - a)
+        sigma = theta / delta
+        Dinv = (1.0 / L.diag)[:, None]
+        u = np.zeros_like(r) if u is None else u
+        res = Dinv * (r - self._A(l, u))
+        rho = 1.0 / sigma
+        d = res / theta
+        for _ in range(self.smooth):
+            u = u + d
+            res = res - Dinv * self._A(l, d)
+            rho_new = 1.0 / (2.0 * sigma - rho)
+            d = rho_new * rho * d + (2.0 * rho_new / delta) * res
+            rho = rho_new
+        return u
+
     def _vcycle(self, l, r):
         L = self.levels[l]
         if l == len(self.levels) - 1:
             if l == 0:                                                   # single level: Jacobi only
                 return r / L.diag[:, None]
             return self.coarse.solve(r)
-        Dinv = (self.omega / L.diag)[:, None]
-        u = Dinv * r
-        for _ in range(self.smooth - 1):
-            u += Dinv * (r - self._A(l, u))
+        u = self._smooth(l, r, None)
         res = r - self._A(l, u)
-        u += self.R[l] @ self._vcycle(l + 1, self.RT[l] @ res)
-        for _ in range(self.smooth):
-            u += Dinv * (r - self._A(l, u))
-        return u
+        u = u + self.R[l] @ self._vcycle(l + 1, self.RT[l] @ res)
+        return self._smooth(l, r, u)
 
     def solve(self, b: np.ndarray, x0: np.ndarray | None = None):
         """b, x0: (ndof, ncol) full-length vectors (fixed DOFs are forced to 0).
