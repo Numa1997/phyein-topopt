@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       case:    {description: "mbb or chair", required: true, default: chair, type: choice, options: [chair, mbb]}
-      n:       {description: "chair: voxels across the half width", default: "16"}
-      volfrac: {description: "volume fraction of the design region", default: "0.12"}
-      rmin:    {description: "filter radius in voxels", default: "1.5"}
+      n:       {description: "chair: voxels across the half width", default: "20"}
+      volfrac: {description: "volume fraction of the design region", default: "0.05"}
+      rmin:    {description: "filter radius in voxels", default: "2.0"}
       penal:   {description: "SIMP penalty p", default: "3.0"}
       label:   {description: "name for the result folder", default: "run"}
 

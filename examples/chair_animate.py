@@ -28,9 +28,11 @@ from topopt.render import (mirror_x, density_to_mesh, vertex_field, plot_scene, 
 LABEL = "approximate voxel FEA · design proposal, not a structural verification"
 
 
-def stress_field(prob, xPhys, nu, lc=1):
+def stress_field(prob, xPhys, nu):
+    """Stress envelope: per element, the largest von Mises stress over all load cases. For the
+    antisymmetric case the mirrored half carries the same magnitude, so mirroring stays valid."""
     U = solve_static(prob, xPhys, 1.0, 1e-9, 3.0, nu)
-    return element_von_mises(prob.grid, U, xPhys, 1.0, nu)[:, lc]
+    return element_von_mises(prob.grid, U, xPhys, 1.0, nu).max(axis=1)
 
 
 def camera(meta, azim_deg, elev_deg=18.0, r=2.15):
@@ -48,6 +50,9 @@ def load_arrows(meta):
     for x in np.linspace(0.12, W - 0.12, 3):
         for y in np.linspace(0.07, yb - 0.07, 3):
             arrows.append(((x, y, zs + 0.17), (0, 0, -1), 0.15))
+    zs_side = zs + 0.02
+    for y in (0.08, yb - 0.08):
+        arrows.append(((-0.22, y, zs_side), (1, 0, 0), 0.15))      # sideways shove
     zb0 = meta["kb0"] * a
     for x in np.linspace(0.12, W - 0.12, 3):
         for z in np.linspace(zb0 + 0.04, meta["Hc"] - 0.04, 2):
@@ -73,6 +78,7 @@ if __name__ == "__main__":
     ap.add_argument("--frames_history", type=int, default=40)
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--size", type=int, nargs=2, default=(1280, 720))
+    ap.add_argument("--cam_r", type=float, default=2.75, help="camera distance for film frames [m]")
     A = ap.parse_args()
     run = Path(A.run_dir)
     meta_all = json.load(open(run / "chair_run.json"))
@@ -101,13 +107,13 @@ if __name__ == "__main__":
     m_col.export(run / "chair_stress.glb")
     for name, az in (("still_front", -40), ("still_back", 140)):
         plot_scene(mesh_f, s_f, clim, str(run / f"{name}.png"), title=LABEL, window=(1600, 1600),
-                   camera=camera(meta, az))
+                   camera=camera(meta, az, r=2.3))
 
     k = 0
     def shot(mesh, scal, az, title, arrows=(), extra=()):
         global k
         plot_scene(mesh, scal, clim, str(frames / f"f{k:05d}.png"), title=title, arrows=arrows,
-                   window=win, camera=camera(meta, az), extra_meshes=extra)
+                   window=win, camera=camera(meta, az, r=A.cam_r), extra_meshes=extra)
         k += 1
 
     arrows, feet = load_arrows(meta), feet_meshes(meta)

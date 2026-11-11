@@ -213,19 +213,30 @@ class Problem:
     fixed: np.ndarray                      # constrained DOF numbers
     passive_solid: np.ndarray = field(default_factory=lambda: np.zeros(0, int))
     passive_void: np.ndarray = field(default_factory=lambda: np.zeros(0, int))
-    weights: np.ndarray | None = None      # load-case weights w_L
+    weights: np.ndarray | None = None      # load-case weights w_L (over all columns of all groups)
+    # optional extra boundary-condition groups: list of (fixed_dofs, loads (3*nnode, nL_g)).
+    # Used for antisymmetric load cases on a half model (other conditions on the mirror plane).
+    # For a mirror-symmetric design, symmetric and antisymmetric fields are K-orthogonal, so their
+    # compliances add and each group can be solved separately.
+    extra_groups: list = field(default_factory=list)
+
+    def groups(self):
+        return [(self.fixed, self.loads)] + list(self.extra_groups)
 
 
 def solve_static(p: Problem, xPhys, E0, Emin, penal, nu, tol=1e-8):
-    """One FE analysis at fixed densities. Returns U (3*nnode, nL) and per-element u^T k0 u."""
+    """One FE analysis at fixed densities. Returns U (3*nnode, all load columns of all groups)."""
     g = p.grid
     ndof = 3 * g.nnode
-    free = np.setdiff1d(np.arange(ndof), p.fixed)
-    asm = Assembler(g, hex8_stiffness(nu), free)
+    k0 = hex8_stiffness(nu)
     Ee = (Emin + xPhys**penal * (E0 - Emin)) * g.a
-    U = np.zeros((ndof, p.loads.shape[1]))
-    U[free], _ = Solver(g, free, tol).solve(asm.K(Ee), p.loads[free])
-    return U
+    out = []
+    for fixed, loads in p.groups():
+        free = np.setdiff1d(np.arange(ndof), fixed)
+        U = np.zeros((ndof, loads.shape[1]))
+        U[free], _ = Solver(g, free, tol).solve(Assembler(g, k0, free).K(Ee), loads[free])
+        out.append(U)
+    return np.hstack(out)
 
 
 def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3, move=0.2,
@@ -233,12 +244,14 @@ def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3
              record=True, verbose=True, cg_tol=1e-8):
     g = p.grid
     ndof = 3 * g.nnode
-    nL = p.loads.shape[1]
+    groups = p.groups()
+    nL = sum(L.shape[1] for _, L in groups)
     w = np.ones(nL) if p.weights is None else np.asarray(p.weights, float)
-    free = np.setdiff1d(np.arange(ndof), p.fixed)
     k0 = hex8_stiffness(nu)
-    asm = Assembler(g, k0, free)
-    solver = Solver(g, free, cg_tol)
+    frees = [np.setdiff1d(np.arange(ndof), f) for f, _ in groups]
+    asms = [Assembler(g, k0, fr) for fr in frees]
+    solvers = [Solver(g, fr, cg_tol) for fr in frees]
+    edof = asms[0].edof
     H, Hs = density_filter(g, rmin)
     design = np.ones(g.nel, bool); design[p.passive_solid] = False; design[p.passive_void] = False
     nd = design.sum()
@@ -255,7 +268,7 @@ def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3
         return xb, dxb
 
     xPhys, dxb = physical(x)
-    U = np.zeros((ndof, nL)); Uf = None
+    U = np.zeros((ndof, nL)); Ufs = [None] * len(groups)
     hist, log = [], []
     loop, change, since_beta = 0, 1.0, 0
     c_hist = []
@@ -263,9 +276,13 @@ def optimise(p: Problem, volfrac, penal=3.0, rmin=1.5, E0=1.0, Emin=1e-9, nu=0.3
     while loop < maxit:
         loop += 1; since_beta += 1
         Ee = (Emin + xPhys**penal * (E0 - Emin)) * g.a
-        Uf, its = solver.solve(asm.K(Ee), p.loads[free], Uf)
-        U[free] = Uf
-        Ue = U[asm.edof]                                           # (nel, 24, nL)
+        its, col = [], 0
+        for gi, ((_, loads), fr) in enumerate(zip(groups, frees)):
+            Ufs[gi], it_g = solvers[gi].solve(asms[gi].K(Ee), loads[fr], Ufs[gi])
+            U[:, col:col + loads.shape[1]] = 0.0
+            U[fr, col:col + loads.shape[1]] = Ufs[gi]
+            col += loads.shape[1]; its += it_g
+        Ue = U[edof]                                               # (nel, 24, nL)
         ce = np.einsum("eil,ij,ejl->el", Ue, k0, Ue) * g.a           # u_e^T (a k0) u_e, per load case
         c = float(np.sum(w * np.sum(Ee[:, None] / g.a * ce, axis=0)))
         dc_xb = -(penal * (E0 - Emin) * xPhys**(penal - 1))[:, None] * ce @ w

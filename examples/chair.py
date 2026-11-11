@@ -40,34 +40,50 @@ def face_nodes_weights(g: Grid, i_rng, j_rng, k_rng):
     return g.node_id(I.ravel(), J.ravel(), K.ravel()), (W / W.sum()).ravel()
 
 
-def build(n=12, W=0.45, D=0.45, Hc=0.90, h_seat=0.45, t_seat=0.025, d_back=0.10, t_skin=0.025,
-          s_foot=0.04, F_seat=1000.0, F_back=300.0):
+def build(n=12, W=0.45, D=0.45, Hc=0.90, h_seat=0.45, t_seat=0.025, d_back=0.10, t_back=0.025,
+          d_brace=0.05, h_brace=0.20, s_foot=0.04, F_seat=1000.0, back_frac=0.5, F_side=150.0):
+    """Half chair (x >= 0, mirror plane x = 0). Parameters in SI units.
+    Backrest: a fixed solid plate of thickness t_back whose front face is d_back from the rear edge;
+    behind it a bracing zone of depth d_brace (from the plate backwards) and height h_brace above
+    the seat may hold material; the rest above the seat is empty.
+    Loads: F_seat on the seat; the lean-back push F_back = back_frac * F_tip, where
+    F_tip = F_seat (D - y_s) / h_b is the push that would tip the chair over its front feet
+    (moment balance about the front-foot line); a sideways shove F_side along x on the seat top."""
     a = (W / 2) / n
     nx, ny, nz = n, int(round(D / a)), int(round(Hc / a))
     g = Grid(nx, ny, nz, a)
-    ks = int(round(h_seat / a))                           # seat top node layer
-    kt = max(1, int(round(t_seat / a)))
-    jb = ny - max(1, int(round(d_back / a)))              # first element row of the backrest zone
-    js = max(1, int(round(t_skin / a)))
+    ks = int(round(h_seat / a)); kt = max(1, int(round(t_seat / a)))
+    jb = ny - max(1, int(round(d_back / a)))              # first element row of the backrest plate
+    js = max(1, int(round(t_back / a)))
+    jbr = min(ny, jb + js + max(1, int(round(d_brace / a))))
+    kbr = min(nz, ks + int(round(h_brace / a)))
     f = max(1, int(round(s_foot / a)))
 
     i, j, k = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
     i, j, k = i.ravel(), j.ravel(), k.ravel()
     seat = (k >= ks - kt) & (k < ks)
-    skin = (j >= jb) & (j < jb + js) & (k >= ks)
-    void = (j < jb) & (k >= ks)
-    passive_solid = np.flatnonzero(seat | skin)
-    passive_void = np.flatnonzero(void)
+    plate = (j >= jb) & (j < jb + js) & (k >= ks)
+    above = k >= ks
+    brace = (j >= jb + js) & (j < jbr) & (k >= ks) & (k < kbr)
+    passive_solid = np.flatnonzero(seat | plate)
+    passive_void = np.flatnonzero(above & ~plate & ~brace)
+
+    # statics of the full chair (section "what must reach the floor")
+    y_s = 0.5 * jb * a                                    # seat-load resultant (uniform over 0..jb)
+    kb0 = ks + (nz - ks) // 2
+    h_b = 0.5 * (kb0 + nz) * a                            # back-load resultant height
+    F_tip = F_seat * (D - y_s) / h_b
+    F_back = back_frac * F_tip
 
     ndof = 3 * g.nnode
     loads = np.zeros((ndof, 2))
-    # half model: half of each total force; the symmetry-plane nodes get half weight automatically
     n_s, w_s = face_nodes_weights(g, (0, nx + 1), (0, jb + 1), (ks, ks + 1))
     for L in (0, 1):
-        loads[3 * n_s + 2, L] -= 0.5 * F_seat * w_s
-    kb0 = ks + (nz - ks) // 2
+        loads[3 * n_s + 2, L] -= 0.5 * F_seat * w_s       # half model carries half of each load
     n_b, w_b = face_nodes_weights(g, (0, nx + 1), (jb, jb + 1), (kb0, nz + 1))
     loads[3 * n_b + 1, 1] += 0.5 * F_back * w_b
+    side = np.zeros((ndof, 1))
+    side[3 * n_s + 0, 0] += 0.5 * F_side * w_s
 
     sym = g.node_id(*[x.ravel() for x in np.meshgrid(0, np.arange(ny + 1), np.arange(nz + 1), indexing="ij")])
     feet = []
@@ -75,18 +91,22 @@ def build(n=12, W=0.45, D=0.45, Hc=0.90, h_seat=0.45, t_seat=0.025, d_back=0.10,
         I, J = np.meshgrid(np.arange(nx - f, nx + 1), np.arange(j0, j1), indexing="ij")
         feet.append(g.node_id(I.ravel(), J.ravel(), 0))
     feet = np.concatenate(feet)
-    fixed = np.unique(np.concatenate([3 * sym, 3 * feet, 3 * feet + 1, 3 * feet + 2]))
+    feetdofs = np.concatenate([3 * feet, 3 * feet + 1, 3 * feet + 2])
+    fixed_sym = np.unique(np.concatenate([3 * sym, feetdofs]))                   # u_x = 0 on the mirror
+    fixed_anti = np.unique(np.concatenate([3 * sym + 1, 3 * sym + 2, feetdofs])) # u_y = u_z = 0 on it
     meta = dict(n=n, a=a, nx=nx, ny=ny, nz=nz, ks=ks, kt=kt, jb=jb, js=js, f=f, kb0=kb0, W=W, D=D, Hc=Hc,
-                F_seat=F_seat, F_back=F_back, load_nodes_seat=n_s.tolist(), load_nodes_back=n_b.tolist())
-    return Problem(g, loads, fixed, passive_solid, passive_void), meta
+                F_seat=F_seat, F_back=F_back, F_tip=F_tip, F_side=F_side, y_s=y_s, h_b=h_b,
+                load_cases=["sit", "sit + lean back", "sideways shove (antisymmetric)"])
+    prob = Problem(g, loads, fixed_sym, passive_solid, passive_void, extra_groups=[(fixed_anti, side)])
+    return prob, meta
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=12, help="voxels across the half width")
-    ap.add_argument("--volfrac", type=float, default=0.12)
+    ap.add_argument("--volfrac", type=float, default=0.05)
     ap.add_argument("--penal", type=float, default=3.0)
-    ap.add_argument("--rmin", type=float, default=1.5, help="filter radius in voxels")
+    ap.add_argument("--rmin", type=float, default=2.0, help="filter radius in voxels")
     ap.add_argument("--nu", type=float, default=0.3)
     ap.add_argument("--beta_max", type=float, default=16.0)
     ap.add_argument("--beta_every", type=int, default=40)
@@ -95,6 +115,8 @@ if __name__ == "__main__":
     A = ap.parse_args()
     prob, meta = build(A.n)
     g = prob.grid
+    print(f"F_seat {meta['F_seat']:.0f} N, F_back {meta['F_back']:.0f} N (tipping at {meta['F_tip']:.0f} N), "
+          f"F_side {meta['F_side']:.0f} N", flush=True)
     print(f"grid {g.nx}x{g.ny}x{g.nz} (half chair), a = {meta['a']*1000:.1f} mm, "
           f"{g.nel} elements, {3*g.nnode} DOFs", flush=True)
     E0 = 1.0                                                 # see docstring: stresses do not depend on E0
@@ -104,7 +126,7 @@ if __name__ == "__main__":
     # stress field of the starting (uniform-density) block, for the "stress" stage of the animation
     out = Path(A.out); out.mkdir(parents=True, exist_ok=True)
     U = r["U"]
-    tip = {f"lc{L+1}_max_disp_times_E0_N_per_m": float(np.abs(U[:, L]).max() * E0) for L in range(2)}
+    tip = {f"lc{L+1}_max_disp_times_E0_N_per_m": float(np.abs(U[:, L]).max() * E0) for L in range(U.shape[1])}
     np.savez_compressed(out / "chair_result.npz", xPhys=r["xPhys"], x=r["x"], U=U, vm=vm,
                         hist=np.stack(r["hist"]), shape=np.array([g.nx, g.ny, g.nz]), a=g.a,
                         passive_solid=prob.passive_solid, passive_void=prob.passive_void)
