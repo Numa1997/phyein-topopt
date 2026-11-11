@@ -11,6 +11,7 @@ on:
       penal:   {description: "SIMP penalty p", default: "3.0"}
       label:   {description: "name for the result folder", default: "run"}
       animate: {description: "render STL, stills and film", default: "yes", type: choice, options: ["yes", "no"]}
+      maxit:   {description: "iteration limit (use 3 to time a grid)", default: "300"}
 
 permissions:
   contents: read
@@ -29,13 +30,14 @@ jobs:
           PENAL: ${{ inputs.penal }}
           LABEL: ${{ inputs.label }}
           ANIMATE: ${{ inputs.animate }}
+          MAXIT: ${{ inputs.maxit }}
         run: |
           IMG=ghcr.io/$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')/phyein-topopt:latest
           mkdir -p out
-          docker run --rm -v "$PWD/out:/work" -e CASE -e N -e VF -e RMIN -e PENAL -e LABEL -e ANIMATE "$IMG" sh -c '
+          docker run --rm -v "$PWD/out:/work" -e CASE -e N -e VF -e RMIN -e PENAL -e LABEL -e ANIMATE -e MAXIT "$IMG" sh -c '
             set -e; cd /opt/phyein-topopt
             if [ "$CASE" = chair ]; then
-              python examples/chair.py --n "$N" --volfrac "$VF" --rmin "$RMIN" --penal "$PENAL" --out "/work/$LABEL"
+              python examples/chair.py --n "$N" --volfrac "$VF" --rmin "$RMIN" --penal "$PENAL" --maxit "$MAXIT" --out "/work/$LABEL"
               python examples/chair_check.py "/work/$LABEL" || echo "DESIGN GOAL NOT MET (see design_check.json)"
               if [ "$ANIMATE" = yes ]; then
                 python examples/chair_animate.py "/work/$LABEL"
