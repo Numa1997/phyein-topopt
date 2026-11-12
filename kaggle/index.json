@@ -1,0 +1,19 @@
+{
+ "about": "Pointer file for the Kaggle copies: notebook and dataset references, versions, source commits and output checksums. Never the data itself. See kaggle/README.md.",
+ "updated": "2026-11-12",
+ "kaggle_owner": null,
+ "notebooks": [
+  {
+   "project": "topopt-benchmarks",
+   "notebook_file": "kaggle/notebooks/topopt-benchmarks.ipynb",
+   "kaggle_slug": "topology-optimisation-solver-five-acceptance-checks",
+   "kaggle_version": null,
+   "private": true,
+   "source": {"repo": "https://github.com/Numa1997/phyein-topopt", "commit": "ef2d27b0f620bfc3d0c40ca691ac2bac2f79ea46"},
+   "machine": "CPU",
+   "status": "built and run locally (113 s, 10 of 10 checks); not yet on Kaggle",
+   "dataset": null,
+   "outputs_sha256": null
+  }
+ ]
+}

@@ -1,0 +1,19 @@
+{
+ "title": "Topology optimisation solver: five acceptance checks",
+ "kaggle_slug": "topology-optimisation-solver-five-acceptance-checks",
+ "summary": "Before a topology-optimisation code may design a chair, it has to get five simpler things right: the deflection of a clamped beam (in 2D and 3D), the rigid-body modes of its 3D element, the gradient it uses to move material, the answer of its fast multigrid solver, and the four published MBB-beam designs of Andreassen et al. (2011). This notebook runs all five with the solver of the phyein-topopt repository and compares every number with beam theory, automatic differentiation, a direct solver and the paper.",
+ "live_url": null,
+ "source": {
+  "repo_url": "https://github.com/Numa1997/phyein-topopt",
+  "commit": "ef2d27b0f620bfc3d0c40ca691ac2bac2f79ea46"
+ },
+ "gpu": false,
+ "internet": true,
+ "timeout_s": 1800,
+ "requires": ["numpy", "scipy", "matplotlib", "pyamg", "pypardiso", "mkl", "jax"],
+ "physics_sources": [
+  "skills/topology-optimisation/SKILL.md, sections 2.1-2.11 (phyein-topopt at the commit above)",
+  "benchmarks/cantilever2d.py, benchmarks/check3d.py, benchmarks/check_mgcg.py, benchmarks/mbb_check.py (docstrings)"
+ ],
+ "verification_text": "Three comparisons. **Against theory and the paper**: each check has the pass limit the repository's own acceptance checks use (MBB within $10^{-4}$ of the paper, cantilever within 1 % of Timoshenko at the finest mesh, 6 rigid-body modes, gradient within $10^{-10}$ of automatic differentiation, multigrid within $10^{-6}$ of the direct solve). **Against the numbers the repository records** in `README.md` and `HANDOVER.md`, at the precision they are printed. **Against a reference run of this same notebook** made on 12 November 2026 in a Claude Code session (4 CPU cores, Python 3.13, the pinned package versions), stored in `kaggle/projects/topopt-benchmarks/reference.json`: the largest relative difference over every deterministic number is printed. A difference above the limit is a bug to find, not a number to explain away."
+}
