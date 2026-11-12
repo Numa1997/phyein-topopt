@@ -32,12 +32,11 @@ STANDARD_LINE = ("**Computed results; this page is not interactive. "
 
 
 def md(text):
-    return {"cell_type": "markdown", "metadata": {}, "source": text.strip("\n").splitlines(keepends=True)}
+    return {"cell_type": "markdown", "metadata": {}, "source": text.strip("\n")}
 
 
 def code(text):
-    return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
-            "source": text.strip("\n").splitlines(keepends=True)}
+    return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": text.strip("\n")}
 
 
 def fill(text, spec):
@@ -130,7 +129,9 @@ def build(name):
         "nbformat": 4,
         "nbformat_minor": 5,
     }
-    return json.dumps(nb, indent=1, ensure_ascii=False) + "\n"
+    # Compact, one string per cell: this exact text is what is sent to Kaggle (save_notebook "text"), so the
+    # SHA-256 of the committed file identifies the notebook version on Kaggle.
+    return json.dumps(nb, ensure_ascii=False, separators=(",", ":"))
 
 
 def main(argv):
